@@ -630,6 +630,12 @@ def _normalize_openai_messages_for_template(messages: list[dict]) -> list[dict]:
     `[{"type":"text","text":"..."}]`. Most HF chat templates expect string
     `content` for text-only models; passing raw lists can drop or distort
     user/system text.
+
+    Some harnesses emit system context in more than one place. Claude Code
+    2.1.x, for example, sends a top-level Anthropic ``system`` field and also a
+    trailing ``{"role": "system"}`` message in ``messages``. Qwen chat templates
+    require the sole system message to be first, so merge all system content
+    into one leading message before rendering.
     """
 
     def _flatten_content(content: Any) -> str:
@@ -667,7 +673,18 @@ def _normalize_openai_messages_for_template(messages: list[dict]) -> list[dict]:
                 new_tcs.append(new_tc)
             m["tool_calls"] = new_tcs
         normalized.append(m)
-    return normalized
+
+    system_messages = [m for m in normalized if m.get("role") == "system"]
+    if not system_messages:
+        return normalized
+
+    merged_system = dict(system_messages[0])
+    merged_system["content"] = "\n\n".join(
+        m["content"] for m in system_messages if m.get("content")
+    )
+    return [merged_system] + [
+        m for m in normalized if m.get("role") != "system"
+    ]
 
 
 # ============================================================================
