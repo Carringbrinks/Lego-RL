@@ -204,12 +204,43 @@ case "$_sc" in
     "")         : ;;
     *)          _pf_warn "unknown SCAFFOLD='$_sc' (supports ohsdk|oh|cc|oc|cx|mixed)" ;;
 esac
-# backend=docker: currently only oh_docker loop config, cc/oc on docker not wired up
+# backend=docker: OH-SDK, Claude Code, and Codex have explicit RemoteDocker loops.
 if [ "$(_lc "${BACKEND:-k8s}")" = docker ]; then
+    _loop_name="$(basename "${AGENT_LOOP_CONFIG_PATH:-}")"
     case "$_sc" in
-        oh|ohsdk) _pf_ok "backend=docker + $_sc ✓ (RemoteDockerEnvironment + oh_docker loop)" ;;
-        *)        _pf_warn "backend=docker currently only agent_loop_config_oh_docker.yaml; SCAFFOLD=$_sc on docker not wired up, recommend k8s or SCAFFOLD=oh" ;;
+        oh|ohsdk)
+            [ "$_loop_name" = "agent_loop_config_oh_docker.yaml" ] \
+                && _pf_ok "backend=docker + $_sc ✓ (RemoteDockerEnvironment + oh_docker loop)" \
+                || _pf_fatal "backend=docker + $_sc must use agent_loop_config_oh_docker.yaml, current=${_loop_name:-<unset>}" ;;
+        cc)
+            [ "$_loop_name" = "agent_loop_config_cc_docker.yaml" ] \
+                && _pf_ok "backend=docker + cc ✓ (RemoteDockerEnvironment + cc_docker loop)" \
+                || _pf_fatal "backend=docker + cc must use agent_loop_config_cc_docker.yaml, current=${_loop_name:-<unset>}" ;;
+        cx)
+            [ "$_loop_name" = "agent_loop_config_cx_docker.yaml" ] \
+                && _pf_ok "backend=docker + cx ✓ (RemoteDockerEnvironment + cx_docker loop)" \
+                || _pf_fatal "backend=docker + cx must use agent_loop_config_cx_docker.yaml, current=${_loop_name:-<unset>}" ;;
+        mixed)
+            [ "$_loop_name" = "agent_loop_config_mixed_cc_cx_ohsdk_docker.yaml" ] \
+                && _pf_ok "backend=docker + mixed ✓ (RemoteDockerEnvironment + CC/CX/OHSDK loop)" \
+                || _pf_fatal "backend=docker + mixed must use agent_loop_config_mixed_cc_cx_ohsdk_docker.yaml, current=${_loop_name:-<unset>}" ;;
+        *)  _pf_warn "backend=docker has no dedicated loop for SCAFFOLD=$_sc; use oh/ohsdk/cc/cx/mixed" ;;
     esac
+    if [ -n "${HARBOR_DOCKER_BUILD_PROXY:-}" ]; then
+        if [ "$_PF_STRUCT" = "1" ]; then
+            _pf_skip "Docker BuildKit proxy reachability: structure-only run"
+        elif ! command -v curl >/dev/null 2>&1; then
+            _pf_fatal "HARBOR_DOCKER_BUILD_PROXY is set but curl is unavailable for its connectivity check"
+        # Probe with HEAD: downloading the full PyPI index can exceed the timeout
+        # even when the proxy is healthy (the page is tens of MB).
+        elif curl -fsSI --connect-timeout 5 --max-time 15 \
+            --proxy "$HARBOR_DOCKER_BUILD_PROXY" -o /dev/null \
+            https://pypi.org/simple/; then
+            _pf_ok "Docker BuildKit proxy reachable: $HARBOR_DOCKER_BUILD_PROXY ✓"
+        else
+            _pf_fatal "Docker BuildKit proxy is unreachable: $HARBOR_DOCKER_BUILD_PROXY. Start it with 'clashctl on', or clear HARBOR_DOCKER_BUILD_PROXY to build without a proxy."
+        fi
+    fi
 fi
 
 # --- 7. image source / kubeconfig ── §4.5 val fake 0 / duplicate build (k8s backend only) ──────

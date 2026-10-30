@@ -33,6 +33,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 from pathlib import Path
 
 from harbor.environments.docker.docker import DockerEnvironment
@@ -40,6 +41,7 @@ from harbor.models.trial.paths import EnvironmentPaths
 
 _DIR = Path(__file__).parent
 _COMPOSE_BASE_REMOTE = _DIR / "docker-compose-base-remote.yaml"
+_COMPOSE_BUILD_PROXY = _DIR / "docker-compose-build-proxy.yaml"
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +95,7 @@ class RemoteDockerEnvironment(DockerEnvironment):
         agent_runtime_image: str | None = None,
         agent_runtime_mount_path: str = "/opt/custom-agent-runtime/claude-code",
         agent_runtime_image_subpath: str | None = None,
+        agent_runtime_stage_helper_image: str | None = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -102,10 +105,30 @@ class RemoteDockerEnvironment(DockerEnvironment):
             (agent_runtime_image_subpath or "").strip()
             or agent_runtime_mount_path.lstrip("/")
         )
+        self._agent_runtime_stage_helper_image = (
+            (agent_runtime_stage_helper_image or "").strip() or None
+        )
 
     @property
     def is_mounted(self) -> bool:
         return False
+
+    @property
+    def _docker_compose_paths(self) -> list[Path]:
+        """Append an opt-in BuildKit proxy override for task-image builds.
+
+        Docker daemon proxy settings cover image pulls, but they are not
+        automatically present in Dockerfile RUN steps. The compose override
+        passes Docker's pre-defined proxy build args so apt/pip/curl can reach
+        the host-side Clash listener without exposing the proxy at task runtime.
+        """
+        paths = super()._docker_compose_paths
+        if (
+            os.environ.get("HARBOR_DOCKER_BUILD_PROXY", "").strip()
+            and _COMPOSE_BUILD_PROXY not in paths
+        ):
+            paths.append(_COMPOSE_BUILD_PROXY)
+        return paths
 
     @staticmethod
     async def _run_cmd(cmd: str) -> tuple[int, str]:
@@ -116,6 +139,68 @@ class RemoteDockerEnvironment(DockerEnvironment):
         )
         out, _ = await proc.communicate()
         return proc.returncode, (out or b"").decode(errors="replace").strip()
+
+    async def _stage_runtime_without_shell(
+        self,
+        image: str,
+        subpath: str,
+        safe_tag: str,
+        uniq: str,
+    ) -> tuple[int, str]:
+        """Stage a scratch-based runtime through a disposable helper image.
+
+        Docker cannot bind-mount an image filesystem. The Codex runtime is
+        FROM scratch, so it has no shell that the normal staging command can
+        execute. Stream only the runtime subtree with ``docker cp`` into a
+        helper container, then atomically install the marked cache directory.
+        """
+        helper = self._agent_runtime_stage_helper_image
+        if not helper:
+            return 1, "no runtime staging helper image configured"
+
+        cache_arg = shlex.quote(f"{_RUNTIME_STAGE_BASE}:/base")
+        helper_q = shlex.quote(helper)
+        image_q = shlex.quote(image)
+        src_path_q = shlex.quote(f"/{subpath.strip('/')}/.")
+        dest_q = shlex.quote(f"/base/{safe_tag}")
+        tmp_q = shlex.quote(f"/base/{uniq}")
+
+        rc, out = await self._run_cmd(
+            f"docker run --rm -v {cache_arg} {helper_q} "
+            f"sh -c 'test -f /base/{safe_tag}/.staged_ok'"
+        )
+        if rc == 0:
+            return 0, "runtime already staged"
+
+        rc, out = await self._run_cmd(f"docker pull -q {helper_q}")
+        if rc != 0:
+            return rc, out
+
+        script = (
+            "set -eu; "
+            f"tmp={tmp_q}; dest={dest_q}; "
+            'rm -rf "$tmp"; mkdir -p "$tmp"; '
+            'tar -xf - -C "$tmp"; '
+            'touch "$tmp/.staged_ok"; '
+            'if ! mv -T "$tmp" "$dest" 2>/dev/null; then '
+            'test -f "$dest/.staged_ok"; '
+            "fi; "
+            'rm -rf "$tmp"'
+        )
+        script_q = shlex.quote(script)
+        marker_q = shlex.quote(f"{_RUNTIME_STAGE_BASE}/{safe_tag}/.staged_ok")
+
+        # The source image only needs to be created, not started. `docker cp`
+        # emits a tar stream which is extracted by the helper container.
+        cmd = (
+            "set -eu; "
+            f"cid=$(docker create {image_q} /codex-placeholder-never-run); "
+            "trap 'docker rm -f \"$cid\" >/dev/null 2>&1 || true' 0 1 2 3 15; "
+            f'docker cp "$cid":{src_path_q} - | '
+            f"docker run --rm -i -v {cache_arg} {helper_q} sh -c {script_q}; "
+            f"test -f {marker_q}"
+        )
+        return await self._run_cmd(cmd)
 
     async def _ensure_runtime_staged(self) -> str | None:
         """Extract the runtime image to a directory on the remote Docker host
@@ -140,6 +225,26 @@ class RemoteDockerEnvironment(DockerEnvironment):
                 logger.warning("runtime image pull failed (%d): %s", rc, out)
                 return None
 
+            uniq = f"{safe_tag}.tmp.{os.getpid()}"
+            if self._agent_runtime_stage_helper_image:
+                rc, out = await self._stage_runtime_without_shell(
+                    image=image,
+                    subpath=subpath,
+                    safe_tag=safe_tag,
+                    uniq=uniq,
+                )
+                if rc != 0:
+                    logger.warning(
+                        "runtime stage via helper failed (%d): %s", rc, out
+                    )
+                    return None
+                _runtime_staged[image] = host_dir
+                logger.info(
+                    "Agent runtime staged without source-image shell at remote %s",
+                    host_dir,
+                )
+                return host_dir
+
             # Already staged on the remote host (possibly by another worker process)?
             # The marker + all path ops go through the remote daemon (host_dir lives on
             # the remote host, not here), using the runtime image itself as the toolbox.
@@ -157,7 +262,6 @@ class RemoteDockerEnvironment(DockerEnvironment):
             # libpython3.12.so"); tar preserves them. Each worker stages into a private,
             # pid-scoped tmp dir and atomically mv's it into place, so concurrent stagers
             # never collide (the old fixed-name `docker create` clashed under concurrency).
-            uniq = f"{safe_tag}.tmp.{os.getpid()}"
             rc, out = await self._run_cmd(
                 f"docker run --rm -v {_RUNTIME_STAGE_BASE}:/base {image} sh -c '"
                 f"rm -rf /base/{uniq}; mkdir -p /base/{uniq} && "

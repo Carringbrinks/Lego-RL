@@ -1,0 +1,13 @@
+# Optional BuildKit proxy override for task-image builds.
+#
+# Docker-injected proxy build args are consumed by RUN steps but are not
+# persisted in the resulting image. RemoteDockerEnvironment appends this file
+# only when HARBOR_DOCKER_BUILD_PROXY is non-empty.
+services:
+  main:
+    build:
+      args:
+        HTTP_PROXY: ${HARBOR_DOCKER_BUILD_PROXY}
+        HTTPS_PROXY: ${HARBOR_DOCKER_BUILD_PROXY}
+        ALL_PROXY: ${HARBOR_DOCKER_BUILD_PROXY}
+        NO_PROXY: ${HARBOR_DOCKER_BUILD_NO_PROXY:-localhost,127.0.0.1,::1}
