@@ -181,3 +181,6 @@ webui/dist.bak-*/
 /resume*.sh
 /ablation*_[0-9]*
 /*.out
+
+# Local task repositories, indexes, and generated task instances.
+/data/
