@@ -201,11 +201,13 @@ append_engine_hydra_args() {
             add actor_rollout_ref.actor.fsdp_config.strategy "$ACTOR_FSDP_STRATEGY"
             add actor_rollout_ref.actor.fsdp_config.param_offload "$ACTOR_FSDP_PARAM_OFFLOAD"
             add actor_rollout_ref.actor.fsdp_config.optimizer_offload "$ACTOR_FSDP_OPTIMIZER_OFFLOAD"
+            add_if_set actor_rollout_ref.actor.fsdp_config.offload_policy ACTOR_FSDP_OFFLOAD_POLICY
             add actor_rollout_ref.actor.fsdp_config.fsdp_size "$FSDP_SIZE"
             add actor_rollout_ref.actor.ulysses_sequence_parallel_size "$SP_SIZE"
             add actor_rollout_ref.ref.strategy "$REF_STRATEGY"
             add actor_rollout_ref.ref.fsdp_config.strategy "$REF_FSDP_STRATEGY"
             add actor_rollout_ref.ref.fsdp_config.param_offload "$REF_FSDP_PARAM_OFFLOAD"
+            add_if_set actor_rollout_ref.ref.fsdp_config.offload_policy REF_FSDP_OFFLOAD_POLICY
             add actor_rollout_ref.ref.ulysses_sequence_parallel_size "$SP_SIZE"
             if is_true "$ENABLE_ROLLOUT_ROUTING_REPLAY"; then
                 add actor_rollout_ref.actor.fsdp_config.router_replay.mode "$R3_FSDP_ROUTER_REPLAY_MODE"

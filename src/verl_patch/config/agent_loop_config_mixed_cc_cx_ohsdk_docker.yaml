@@ -1,0 +1,163 @@
+# Mixed Claude Code / Codex CLI / OpenHands SDK agent loop config.
+#
+# All three harnesses use RemoteDockerEnvironment. A rollout selects exactly
+# one harness; it never runs all three harnesses against the same sample.
+#
+# Selection precedence:
+#   1. Validation uses harness_selection.val_harness (OpenHands SDK by default).
+#   2. Training uses an explicit sample metadata value when present:
+#        direct agent_harness > extra_info.agent_harness >
+#        direct harness > extra_info.harness
+#      Canonical values are claude_code, codex, and openhands_sdk.
+#   3. Otherwise harness_selection.fallback is applied. With
+#      fallback=weighted_random, task granularity chooses one weighted harness
+#      deterministically per task/global-step and reuses it for sibling
+#      rollouts; trajectory granularity chooses independently per rollout.
+#
+# The worker-level proxy and loop controls are shared. Runtime images and agent
+# implementations are isolated per harness.
+- name: builtin_swe_agent
+  _target_: verl_patch.agent_loop.BuiltinSWEAgentLoop
+  trajectory_selection: ${oc.env:HARBOR_TRAJECTORY_SELECTION,longest}
+  tool_parser: ${oc.env:TOOL_CALL_PARSER,qwen3_coder}
+  max_consecutive_no_tool: ${oc.decode:${oc.env:HARBOR_MAX_CONSECUTIVE_NO_TOOL,3}}
+  trials_dir: ${oc.env:HARBOR_TRIALS_DIR,./harbor_trials}
+  max_retries: ${oc.decode:${oc.env:HARBOR_MAX_RETRIES,2}}
+
+  harness_selection:
+    metadata_keys:
+      - agent_harness
+      - harness
+    default: ${oc.env:HARBOR_HARNESS_DEFAULT,openhands_sdk}
+    fallback: ${oc.env:HARBOR_HARNESS_FALLBACK,weighted_random}
+    # Validation remains comparable by running one fixed harness.
+    val_harness: ${oc.env:HARBOR_VAL_HARNESS,openhands_sdk}
+    random_seed: ${oc.decode:${oc.env:HARBOR_HARNESS_RANDOM_SEED,1234}}
+    granularity: ${oc.env:HARBOR_HARNESS_GRANULARITY,task}
+    weights:
+      claude_code: ${oc.decode:${oc.env:HARBOR_HARNESS_WEIGHT_CC,1.0}}
+      codex: ${oc.decode:${oc.env:HARBOR_HARNESS_WEIGHT_CX,1.0}}
+      openhands_sdk: ${oc.decode:${oc.env:HARBOR_HARNESS_WEIGHT_OHSDK,1.0}}
+
+  harnesses:
+    claude_code:
+      protocol: anthropic
+      harbor_cfg:
+        agent:
+          import_path: ${oc.env:HARBOR_MIXED_CC_IMPORT_PATH,harbor_patch.agents.image_mounted_claude_code:ClaudeCode}
+          model_name: ${oc.env:SERVED_MODEL_NAME,vllm_model}
+          max_timeout_sec: ${oc.decode:${oc.env:HARBOR_MIXED_CC_MAX_TIMEOUT_SEC,1500}}
+          override_timeout_sec: ${oc.decode:${oc.env:HARBOR_MIXED_CC_OVERRIDE_TIMEOUT_SEC,1500}}
+          kwargs:
+            max_turns: ${oc.decode:${oc.env:HARBOR_MIXED_CC_MAX_ITERATIONS,100}}
+            temperature: ${oc.decode:${oc.env:HARBOR_AGENT_TEMPERATURE,1.0}}
+          env:
+            # Replaced per trial with the worker proxy's /sess/{id} endpoint.
+            ANTHROPIC_BASE_URL: ${oc.env:HARBOR_MIXED_CC_ANTHROPIC_BASE_URL,http://127.0.0.1:8002}
+            ANTHROPIC_API_KEY: ${oc.env:HARBOR_ANTHROPIC_API_KEY,sk-dummy}
+            ANTHROPIC_MODEL: ${oc.env:HARBOR_ANTHROPIC_MODEL,vllm_model}
+            CLAUDE_CODE_ATTRIBUTION_HEADER: ${oc.env:CLAUDE_CODE_ATTRIBUTION_HEADER,0}
+            CUSTOM_AGENT_RUNTIME_ROOT: ${oc.env:HARBOR_MIXED_CC_RUNTIME_MOUNT_PATH,/opt/custom-agent-runtime/claude-code}
+            CUSTOM_AGENT_CLAUDE: ${oc.env:HARBOR_MIXED_CC_CUSTOM_AGENT_CLAUDE,/opt/custom-agent-runtime/claude-code/bin/claude}
+            CUSTOM_AGENT_RUNTIME_ENV_SCRIPT: ${oc.env:HARBOR_MIXED_CC_RUNTIME_ENV_SCRIPT,/opt/custom-agent-runtime/claude-code/runtime-env.sh}
+        verifier:
+          enabled: ${oc.decode:${oc.env:HARBOR_VERIFIER_ENABLED,True}}
+        environment:
+          # Harbor's enum has no remote-docker value; import_path selects the
+          # patched implementation and type intentionally remains null.
+          type: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_TYPE,null}}
+          import_path: ${oc.env:HARBOR_ENVIRONMENT_IMPORT_PATH,harbor_patch.environments.remote_docker:RemoteDockerEnvironment}
+          force_build: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_FORCE_BUILD,True}}
+          delete: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_DELETE,True}}
+          override_cpus: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_OVERRIDE_CPUS,2}}
+          override_memory_mb: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_OVERRIDE_MEMORY_MB,8192}}
+          kwargs:
+            agent_runtime_image: ${oc.decode:${oc.env:HARBOR_MIXED_CC_RUNTIME_IMAGE,docker.io/jierun/c-cc-2.1.207:v0.1}}
+            agent_runtime_mount_path: ${oc.env:HARBOR_MIXED_CC_RUNTIME_MOUNT_PATH,/opt/custom-agent-runtime/claude-code}
+            agent_runtime_image_subpath: ${oc.env:HARBOR_MIXED_CC_RUNTIME_IMAGE_SUBPATH,opt/custom-agent-runtime/claude-code}
+        environment_build_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_BUILD_TIMEOUT_MULTIPLIER,1.0}}
+        agent_setup_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_AGENT_SETUP_TIMEOUT_MULTIPLIER,5.0}}
+        agent_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_AGENT_TIMEOUT_MULTIPLIER,0.8}}
+        verifier_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_VERIFIER_TIMEOUT_MULTIPLIER,1.0}}
+
+    codex:
+      protocol: openai
+      harbor_cfg:
+        agent:
+          # Must stay null so Harbor dispatches through import_path instead of
+          # selecting the npm-installed built-in Codex agent.
+          name: ${oc.decode:${oc.env:HARBOR_AGENT_NAME,null}}
+          import_path: ${oc.env:HARBOR_MIXED_CX_IMPORT_PATH,harbor_patch.agents.image_mounted_codex:Codex}
+          version: ${oc.env:HARBOR_MIXED_CX_VERSION,0.153.4}
+          model_name: ${oc.env:SERVED_MODEL_NAME,vllm_model}
+          max_timeout_sec: ${oc.decode:${oc.env:HARBOR_MIXED_CX_MAX_TIMEOUT_SEC,3600}}
+          override_timeout_sec: ${oc.decode:${oc.env:HARBOR_MIXED_CX_OVERRIDE_TIMEOUT_SEC,3600}}
+          kwargs:
+            max_turns: ${oc.decode:${oc.env:HARBOR_MIXED_CX_MAX_ITERATIONS,100}}
+            temperature: ${oc.decode:${oc.env:HARBOR_AGENT_TEMPERATURE,1.0}}
+            reasoning_effort: ${oc.env:CODEX_REASONING_EFFORT,medium}
+          env:
+            # Replaced per trial with the worker proxy's /sess/{id}/v1 endpoint.
+            OPENAI_BASE_URL: ${oc.env:HARBOR_MIXED_CX_OPENAI_BASE_URL,http://127.0.0.1:8002/v1}
+            OPENAI_API_KEY: ${oc.env:HARBOR_OPENAI_API_KEY,sk-dummy}
+            CODEX_FORCE_API_KEY: "1"
+            CUSTOM_AGENT_RUNTIME_ROOT: ${oc.env:HARBOR_MIXED_CX_RUNTIME_MOUNT_PATH,/opt/custom-agent-runtime/codex}
+        verifier:
+          enabled: ${oc.decode:${oc.env:HARBOR_VERIFIER_ENABLED,True}}
+        environment:
+          type: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_TYPE,null}}
+          import_path: ${oc.env:HARBOR_ENVIRONMENT_IMPORT_PATH,harbor_patch.environments.remote_docker:RemoteDockerEnvironment}
+          force_build: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_FORCE_BUILD,True}}
+          delete: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_DELETE,True}}
+          override_cpus: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_OVERRIDE_CPUS,2}}
+          override_memory_mb: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_OVERRIDE_MEMORY_MB,8192}}
+          kwargs:
+            agent_runtime_image: ${oc.decode:${oc.env:HARBOR_MIXED_CX_RUNTIME_IMAGE,docker.io/jierun/c-codex-0.153.4:v0.1}}
+            agent_runtime_mount_path: ${oc.env:HARBOR_MIXED_CX_RUNTIME_MOUNT_PATH,/opt/custom-agent-runtime/codex}
+            agent_runtime_image_subpath: ${oc.env:HARBOR_MIXED_CX_RUNTIME_IMAGE_SUBPATH,opt/custom-agent-runtime/codex}
+            # The Codex runtime image is scratch-based and cannot run a shell,
+            # so RemoteDocker stages it through this tar-only helper.
+            agent_runtime_stage_helper_image: ${oc.env:HARBOR_MIXED_CX_STAGE_HELPER_IMAGE,alpine:3.20}
+        environment_build_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_BUILD_TIMEOUT_MULTIPLIER,1.0}}
+        agent_setup_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_AGENT_SETUP_TIMEOUT_MULTIPLIER,5.0}}
+        agent_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_AGENT_TIMEOUT_MULTIPLIER,0.8}}
+        verifier_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_VERIFIER_TIMEOUT_MULTIPLIER,1.0}}
+
+    openhands_sdk:
+      protocol: openai
+      harbor_cfg:
+        agent:
+          name: ${oc.decode:${oc.env:HARBOR_AGENT_NAME,null}}
+          model_name: hosted_vllm/${oc.env:SERVED_MODEL_NAME,vllm_model}
+          import_path: ${oc.env:HARBOR_MIXED_OHSDK_IMPORT_PATH,harbor.agents.custom.openhands_sdk:CustomOpenHandsSDK}
+          max_timeout_sec: ${oc.decode:${oc.env:HARBOR_MIXED_OHSDK_MAX_TIMEOUT_SEC,null}}
+          override_timeout_sec: ${oc.decode:${oc.env:HARBOR_MIXED_OHSDK_OVERRIDE_TIMEOUT_SEC,null}}
+          kwargs:
+            max_iterations: ${oc.decode:${oc.env:HARBOR_MIXED_OHSDK_MAX_ITERATIONS,100}}
+            max_turns: ${oc.decode:${oc.env:HARBOR_MIXED_OHSDK_MAX_ITERATIONS,100}}
+            version: ${oc.env:HARBOR_MIXED_OHSDK_VERSION,1.33.0}
+            disable_tool_calls: ${oc.decode:${oc.env:HARBOR_AGENT_DISABLE_TOOL_CALLS,False}}
+            parser_name: ${oc.env:HARBOR_AGENT_PARSER_NAME,json}
+            model_info: ${oc.decode:${oc.env:HARBOR_AGENT_MODEL_INFO,null}}
+            interleaved_thinking: ${oc.decode:${oc.env:HARBOR_AGENT_INTERLEAVED_THINKING,False}}
+            enable_summarize: ${oc.decode:${oc.env:HARBOR_AGENT_ENABLE_SUMMARIZE,True}}
+            proactive_summarization_threshold: ${oc.decode:${oc.env:HARBOR_AGENT_PROACTIVE_SUMMARIZATION_THRESHOLD,8000}}
+            record_terminal_session: ${oc.decode:${oc.env:HARBOR_AGENT_RECORD_TERMINAL_SESSION,True}}
+            suppress_max_turns_warning: ${oc.decode:${oc.env:HARBOR_AGENT_SUPPRESS_MAX_TURNS_WARNING,True}}
+        verifier:
+          enabled: ${oc.decode:${oc.env:HARBOR_VERIFIER_ENABLED,True}}
+        environment:
+          type: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_TYPE,null}}
+          import_path: ${oc.env:HARBOR_ENVIRONMENT_IMPORT_PATH,harbor_patch.environments.remote_docker:RemoteDockerEnvironment}
+          force_build: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_FORCE_BUILD,True}}
+          delete: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_DELETE,True}}
+          override_cpus: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_OVERRIDE_CPUS,2}}
+          override_memory_mb: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_OVERRIDE_MEMORY_MB,8192}}
+          kwargs:
+            agent_runtime_image: ${oc.decode:${oc.env:HARBOR_MIXED_OHSDK_RUNTIME_IMAGE,docker.io/jierun/c-oh-sdk-1.33.0:v0.1}}
+            agent_runtime_mount_path: ${oc.env:HARBOR_MIXED_OHSDK_RUNTIME_MOUNT_PATH,/opt/custom-agent-runtime/oh-sdk}
+            agent_runtime_image_subpath: ${oc.env:HARBOR_MIXED_OHSDK_RUNTIME_IMAGE_SUBPATH,opt/custom-agent-runtime/oh-sdk}
+        environment_build_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_BUILD_TIMEOUT_MULTIPLIER,1.0}}
+        agent_setup_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_AGENT_SETUP_TIMEOUT_MULTIPLIER,5.0}}
+        agent_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_AGENT_TIMEOUT_MULTIPLIER,0.8}}
+        verifier_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_VERIFIER_TIMEOUT_MULTIPLIER,1.0}}

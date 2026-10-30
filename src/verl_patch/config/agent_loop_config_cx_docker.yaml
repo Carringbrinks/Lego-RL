@@ -1,0 +1,57 @@
+# Harbor x Codex agent loop config - Remote Docker variant.
+#
+# Architecture:
+#   codex exec (inside the task container, mounted runtime)
+#     -> in-process vLLM proxy (OpenAI Responses API)
+#       -> vLLM (managed by verl)
+#
+# The Codex runtime image is FROM scratch and contains no shell. The Docker
+# backend therefore stages it through a small helper image before mounting the
+# runtime subtree read-only into each task container.
+- name: builtin_swe_agent
+  _target_: verl_patch.agent_loop.BuiltinSWEAgentLoop
+  trajectory_selection: ${oc.env:HARBOR_TRAJECTORY_SELECTION,longest}
+  tool_parser: ${oc.env:TOOL_CALL_PARSER,qwen3_coder}
+  max_consecutive_no_tool: ${oc.decode:${oc.env:HARBOR_MAX_CONSECUTIVE_NO_TOOL,3}}
+  trials_dir: ${oc.env:HARBOR_TRIALS_DIR,./harbor_trials}
+  max_retries: ${oc.decode:${oc.env:HARBOR_MAX_RETRIES,2}}
+  harbor_cfg:
+    agent:
+      # Keep null so Harbor dispatches through import_path to the mounted
+      # runtime subclass instead of the in-container npm installer.
+      name: ${oc.decode:${oc.env:HARBOR_AGENT_NAME,null}}
+      import_path: ${oc.env:HARBOR_AGENT_IMPORT_PATH,harbor_patch.agents.image_mounted_codex:Codex}
+      version: ${oc.env:HARBOR_AGENT_VERSION,0.153.4}
+      model_name: ${oc.env:SERVED_MODEL_NAME,vllm_model}
+      max_timeout_sec: ${oc.decode:${oc.env:HARBOR_AGENT_MAX_TIMEOUT_SEC,3600}}
+      override_timeout_sec: ${oc.decode:${oc.env:HARBOR_AGENT_OVERRIDE_TIMEOUT_SEC,3600}}
+      kwargs:
+        max_turns: ${oc.decode:${oc.env:HARBOR_AGENT_MAX_ITERATIONS,100}}
+        temperature: ${oc.decode:${oc.env:HARBOR_AGENT_TEMPERATURE,1.0}}
+        reasoning_effort: ${oc.env:CODEX_REASONING_EFFORT,medium}
+      env:
+        # The loop replaces this placeholder with a per-session proxy URL.
+        OPENAI_BASE_URL: ${oc.env:HARBOR_OPENAI_BASE_URL,http://127.0.0.1:8002/v1}
+        OPENAI_API_KEY: ${oc.env:HARBOR_OPENAI_API_KEY,sk-dummy}
+        CODEX_FORCE_API_KEY: "1"
+        CUSTOM_AGENT_RUNTIME_ROOT: ${oc.env:HARBOR_AGENT_RUNTIME_MOUNT_PATH,/opt/custom-agent-runtime/codex}
+    verifier:
+      enabled: ${oc.decode:${oc.env:HARBOR_VERIFIER_ENABLED,True}}
+    environment:
+      type: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_TYPE,null}}
+      import_path: ${oc.env:HARBOR_ENVIRONMENT_IMPORT_PATH,harbor_patch.environments.remote_docker:RemoteDockerEnvironment}
+      force_build: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_FORCE_BUILD,True}}
+      delete: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_DELETE,True}}
+      override_cpus: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_OVERRIDE_CPUS,1}}
+      override_memory_mb: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_OVERRIDE_MEMORY_MB,8192}}
+      kwargs:
+        agent_runtime_image: ${oc.decode:${oc.env:HARBOR_AGENT_RUNTIME_IMAGE,null}}
+        agent_runtime_mount_path: ${oc.env:HARBOR_AGENT_RUNTIME_MOUNT_PATH,/opt/custom-agent-runtime/codex}
+        agent_runtime_image_subpath: ${oc.env:HARBOR_AGENT_RUNTIME_IMAGE_SUBPATH,opt/custom-agent-runtime/codex}
+        # Codex's runtime image has no shell, so it cannot stage itself with
+        # `docker run <runtime> sh`. This helper only extracts a tar stream.
+        agent_runtime_stage_helper_image: ${oc.env:HARBOR_DOCKER_RUNTIME_STAGE_HELPER_IMAGE,alpine:3.20}
+    environment_build_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_BUILD_TIMEOUT_MULTIPLIER,1.0}}
+    agent_setup_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_AGENT_SETUP_TIMEOUT_MULTIPLIER,5.0}}
+    agent_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_AGENT_TIMEOUT_MULTIPLIER,0.8}}
+    verifier_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_VERIFIER_TIMEOUT_MULTIPLIER,1.0}}

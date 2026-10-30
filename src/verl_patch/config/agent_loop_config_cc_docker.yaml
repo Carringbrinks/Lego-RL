@@ -50,7 +50,13 @@
       delete: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_DELETE,True}}
       override_cpus: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_OVERRIDE_CPUS,1}}
       override_memory_mb: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_OVERRIDE_MEMORY_MB,8192}}
-      kwargs: {}
+      kwargs:
+        # Docker has no ImageVolume. RemoteDockerEnvironment extracts this
+        # image once and bind-mounts the runtime subtree read-only into every
+        # task container.
+        agent_runtime_image: ${oc.decode:${oc.env:HARBOR_AGENT_RUNTIME_IMAGE,null}}
+        agent_runtime_mount_path: ${oc.env:HARBOR_AGENT_RUNTIME_MOUNT_PATH,/opt/custom-agent-runtime/claude-code}
+        agent_runtime_image_subpath: ${oc.env:HARBOR_AGENT_RUNTIME_IMAGE_SUBPATH,opt/custom-agent-runtime/claude-code}
     environment_build_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_BUILD_TIMEOUT_MULTIPLIER,1.0}}
     agent_setup_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_AGENT_SETUP_TIMEOUT_MULTIPLIER,5.0}}
     agent_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_AGENT_TIMEOUT_MULTIPLIER,0.8}}
