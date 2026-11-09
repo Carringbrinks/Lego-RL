@@ -13,6 +13,7 @@ CURRENT_LOOP_CONFIGS = (
     "src/verl_patch/config/agent_loop_config_cc.yaml",
     "src/verl_patch/config/agent_loop_config_oh_docker.yaml",
     "src/verl_patch/config/agent_loop_config_cc_docker.yaml",
+    "src/verl_patch/config/agent_loop_config_oc_docker.yaml",
     "src/verl_patch/config/agent_loop_config_mixed.yaml",
 )
 SHARED_LOOP_CONTROLS = {

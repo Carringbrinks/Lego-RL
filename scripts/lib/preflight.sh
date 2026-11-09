@@ -204,7 +204,8 @@ case "$_sc" in
     "")         : ;;
     *)          _pf_warn "unknown SCAFFOLD='$_sc' (supports ohsdk|oh|cc|oc|cx|mixed)" ;;
 esac
-# backend=docker: OH-SDK, Claude Code, and Codex have explicit RemoteDocker loops.
+# backend=docker: OH-SDK, Claude Code, Codex, OpenCode, and mixed have explicit
+# RemoteDocker loops.
 if [ "$(_lc "${BACKEND:-k8s}")" = docker ]; then
     _loop_name="$(basename "${AGENT_LOOP_CONFIG_PATH:-}")"
     case "$_sc" in
@@ -220,11 +221,15 @@ if [ "$(_lc "${BACKEND:-k8s}")" = docker ]; then
             [ "$_loop_name" = "agent_loop_config_cx_docker.yaml" ] \
                 && _pf_ok "backend=docker + cx ✓ (RemoteDockerEnvironment + cx_docker loop)" \
                 || _pf_fatal "backend=docker + cx must use agent_loop_config_cx_docker.yaml, current=${_loop_name:-<unset>}" ;;
+        oc)
+            [ "$_loop_name" = "agent_loop_config_oc_docker.yaml" ] \
+                && _pf_ok "backend=docker + oc ✓ (RemoteDockerEnvironment + oc_docker loop)" \
+                || _pf_fatal "backend=docker + oc must use agent_loop_config_oc_docker.yaml, current=${_loop_name:-<unset>}" ;;
         mixed)
             [ "$_loop_name" = "agent_loop_config_mixed_cc_cx_ohsdk_docker.yaml" ] \
                 && _pf_ok "backend=docker + mixed ✓ (RemoteDockerEnvironment + CC/CX/OHSDK loop)" \
                 || _pf_fatal "backend=docker + mixed must use agent_loop_config_mixed_cc_cx_ohsdk_docker.yaml, current=${_loop_name:-<unset>}" ;;
-        *)  _pf_warn "backend=docker has no dedicated loop for SCAFFOLD=$_sc; use oh/ohsdk/cc/cx/mixed" ;;
+        *)  _pf_warn "backend=docker has no dedicated loop for SCAFFOLD=$_sc; use oh/ohsdk/cc/cx/oc/mixed" ;;
     esac
     if [ -n "${HARBOR_DOCKER_BUILD_PROXY:-}" ]; then
         if [ "$_PF_STRUCT" = "1" ]; then
