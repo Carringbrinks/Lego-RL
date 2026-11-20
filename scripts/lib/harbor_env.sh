@@ -13,21 +13,21 @@ export HARBOR_SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-vllm_model}"
 
 # ── §8a scaffold: agent class / runtime image / provider env / loop config ──
 case "$SCAFFOLD" in
-  ohsdk)  # OpenHands-SDK (primary). AGENT_NAME must be null → uses import_path=CustomOpenHandsSDK
+  ohsdk)  # OpenHands-SDK 1.59.0 baked into the unified base (no runtime mount)
     : "${HARBOR_AGENT_NAME:=null}"
-    : "${HARBOR_AGENT_IMPORT_PATH:=harbor.agents.custom.openhands_sdk:CustomOpenHandsSDK}"
-    : "${HARBOR_AGENT_RUNTIME_IMAGE:=docker.io/jierun/c-oh-sdk-1.33.0:v0.1}"
+    : "${HARBOR_AGENT_IMPORT_PATH:=harbor_patch.agents.installed_openhands_sdk:OpenHandsSDK}"
+    : "${HARBOR_AGENT_RUNTIME_IMAGE:=null}"
     : "${HARBOR_AGENT_RUNTIME_MOUNT_PATH:=/opt/custom-agent-runtime/oh-sdk}"
     : "${HARBOR_AGENT_RUNTIME_IMAGE_SUBPATH:=opt/custom-agent-runtime/oh-sdk}"
-    : "${HARBOR_AGENT_VERSION:=1.33.0}"
+    : "${HARBOR_AGENT_VERSION:=1.59.0}"
     # NOTE: must be `export VAR="${VAR:-{...}}"`, NOT `: "${VAR:={...}}"` — the `:=` assign form
     # swallows the dict's own closing brace with literal braces in the default → oc.decode parse error.
     export HARBOR_AGENT_MODEL_INFO="${HARBOR_AGENT_MODEL_INFO:-{max_input_tokens: ${max_prompt_length:-40000}, max_output_tokens: ${max_response_length:-91072}, input_cost_per_token: 0, output_cost_per_token: 0}}"
     _loop_default="agent_loop_config_oh.yaml"; : "${ENABLE_R3:=True}" ;;
-  oh)     # native openhands-ai (image-mounted). the old docker path defaults to this scaffold
+  oh)     # OpenHands (openhands-ai 0.50.0), baked into the unified agent base
     : "${HARBOR_AGENT_NAME:=null}"
     : "${HARBOR_AGENT_IMPORT_PATH:=harbor_patch.agents.image_mounted_openhands_ai.openhands:OpenHands}"
-    : "${HARBOR_AGENT_RUNTIME_IMAGE:=yuantao428/harbor-openhands-ai-runtime:0.50.0}"
+    : "${HARBOR_AGENT_RUNTIME_IMAGE:=null}"
     : "${HARBOR_AGENT_RUNTIME_MOUNT_PATH:=/opt/custom-agent-runtime/openhands-ai}"
     : "${HARBOR_AGENT_RUNTIME_IMAGE_SUBPATH:=opt/custom-agent-runtime/openhands-ai}"
     : "${HARBOR_AGENT_VERSION:=0.50.0}"
@@ -36,10 +36,10 @@ case "$SCAFFOLD" in
     # Keep name null so Harbor dispatches the image-mounted custom import_path.
     : "${HARBOR_AGENT_NAME:=null}"
     : "${HARBOR_AGENT_IMPORT_PATH:=harbor_patch.agents.image_mounted_claude_code:ClaudeCode}"
-    : "${HARBOR_AGENT_RUNTIME_IMAGE:=docker.io/jierun/c-cc-2.1.118:v0.1}"
+    : "${HARBOR_AGENT_RUNTIME_IMAGE:=null}"
     : "${HARBOR_AGENT_RUNTIME_MOUNT_PATH:=/opt/custom-agent-runtime/claude-code}"
     : "${HARBOR_AGENT_RUNTIME_IMAGE_SUBPATH:=opt/custom-agent-runtime/claude-code}"
-    : "${HARBOR_AGENT_VERSION:=2.1.118}"
+    : "${HARBOR_AGENT_VERSION:=2.1.312}"
     export HARBOR_ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-${HARBOR_ANTHROPIC_API_KEY:-sk-dummy}}"
     export HARBOR_ANTHROPIC_MODEL="${HARBOR_ANTHROPIC_MODEL:-${SERVED_MODEL_NAME:-vllm_model}}"
     _loop_default="agent_loop_config_cc.yaml"; : "${ENABLE_R3:=True}" ;;
@@ -47,10 +47,10 @@ case "$SCAFFOLD" in
     # Keep name null so Harbor dispatches the image-mounted custom import_path.
     : "${HARBOR_AGENT_NAME:=null}"
     : "${HARBOR_AGENT_IMPORT_PATH:=harbor_patch.agents.image_mounted_opencode:OpenCode}"
-    : "${HARBOR_AGENT_RUNTIME_IMAGE:=docker.io/jierun/c-oc-1.14.22:v0.1}"
+    : "${HARBOR_AGENT_RUNTIME_IMAGE:=null}"
     : "${HARBOR_AGENT_RUNTIME_MOUNT_PATH:=/opt/custom-agent-runtime/opencode}"
     : "${HARBOR_AGENT_RUNTIME_IMAGE_SUBPATH:=opt/custom-agent-runtime/opencode}"
-    : "${HARBOR_AGENT_VERSION:=1.14.22}"
+    : "${HARBOR_AGENT_VERSION:=1.19.5}"
     export HARBOR_OPENAI_BASE_URL="${HARBOR_OPENAI_BASE_URL:-http://in-process-proxy/v1}"
     export HARBOR_OPENAI_API_KEY="${HARBOR_OPENAI_API_KEY:-sk-dummy}"
     export HARBOR_CUSTOM_AGENT_OPENCODE="${HARBOR_CUSTOM_AGENT_OPENCODE:-$HARBOR_AGENT_RUNTIME_MOUNT_PATH/bin/opencode}"
@@ -61,11 +61,11 @@ case "$SCAFFOLD" in
     # harbor.agents.installed.codex:Codex and install in-pod via nvm+npm instead.
     : "${HARBOR_AGENT_NAME:=null}"
     : "${HARBOR_AGENT_IMPORT_PATH:=harbor_patch.agents.image_mounted_codex:Codex}"
-    : "${HARBOR_AGENT_RUNTIME_IMAGE:=docker.io/jierun/c-codex-0.153.4:v0.1}"
+    : "${HARBOR_AGENT_RUNTIME_IMAGE:=null}"
     : "${HARBOR_AGENT_RUNTIME_MOUNT_PATH:=/opt/custom-agent-runtime/codex}"
     : "${HARBOR_AGENT_RUNTIME_IMAGE_SUBPATH:=opt/custom-agent-runtime/codex}"
     # Pinned: the installed path falls back to @latest, which moves under you.
-    : "${HARBOR_AGENT_VERSION:=0.153.4}"
+    : "${HARBOR_AGENT_VERSION:=0.144.1}"
     export HARBOR_OPENAI_BASE_URL="${HARBOR_OPENAI_BASE_URL:-http://in-process-proxy/v1}"
     export HARBOR_OPENAI_API_KEY="${HARBOR_OPENAI_API_KEY:-sk-dummy}"
     export CODEX_REASONING_EFFORT="${CODEX_REASONING_EFFORT:-medium}"
@@ -74,7 +74,7 @@ case "$SCAFFOLD" in
     : "${HARBOR_AGENT_NAME:=null}"
     : "${HARBOR_VAL_HARNESS:=openhands_sdk}"
     _loop_default="agent_loop_config_mixed.yaml"; : "${ENABLE_R3:=True}" ;;
-  *) echo "[harbor_env][FATAL] unknown SCAFFOLD='$SCAFFOLD' (supports ohsdk|oh|cc|oc|cx|mixed)" >&2; return 1 2>/dev/null || exit 1 ;;
+  *) echo "[harbor_env][FATAL] unknown SCAFFOLD='$SCAFFOLD' (supports ohsdk|oh|cc|oc|cx|pi|mixed)" >&2; return 1 2>/dev/null || exit 1 ;;
 esac
 export HARBOR_AGENT_NAME HARBOR_AGENT_IMPORT_PATH HARBOR_AGENT_RUNTIME_IMAGE \
        HARBOR_AGENT_RUNTIME_MOUNT_PATH HARBOR_AGENT_RUNTIME_IMAGE_SUBPATH HARBOR_AGENT_VERSION ENABLE_R3

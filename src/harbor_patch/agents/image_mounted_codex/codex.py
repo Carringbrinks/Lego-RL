@@ -75,9 +75,17 @@ class Codex(_BaseCodex):
             return
 
         # The parent's run() invokes a bare `codex`, so putting the mounted
-        # binary on PATH is all that is needed — no wrapper, no node.
+        # binary on PATH is all that is needed — no wrapper, no node. The
+        # unified base image exposes codex through a compatibility symlink that
+        # already resolves to /usr/local/bin/codex; linking it again would
+        # create a self-referential symlink, so compare realpaths first.
         await self.exec_as_root(
-            environment, command=f"ln -sf {shlex.quote(binary)} /usr/local/bin/codex"
+            environment,
+            command=(
+                f"if [ \"$(readlink -f {shlex.quote(binary)})\" != "
+                "\"$(readlink -f /usr/local/bin/codex 2>/dev/null || true)\" ]; then "
+                f"ln -sf {shlex.quote(binary)} /usr/local/bin/codex; fi"
+            ),
         )
 
         result = await environment.exec(command="codex --version")

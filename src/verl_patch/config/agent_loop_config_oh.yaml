@@ -68,7 +68,7 @@
         namespace: ${oc.env:K8S_NAMESPACE,default}
         pod_startup_timeout_sec: ${oc.decode:${oc.env:K8S_POD_STARTUP_TIMEOUT,3000}}
         pod_active_deadline_seconds: ${oc.decode:${oc.env:K8S_POD_ACTIVE_DEADLINE_SECONDS,null}}
-        agent_runtime_image: ${oc.env:HARBOR_AGENT_RUNTIME_IMAGE,yuantao428/harbor-openhands-ai-runtime:0.50.0}
+        agent_runtime_image: ${oc.decode:${oc.env:HARBOR_AGENT_RUNTIME_IMAGE,yuantao428/harbor-openhands-ai-runtime:0.50.0}}
         # Node names to keep sandbox pods OFF, comma-separated. Empty = no
         # affinity block, spec unchanged. See kubernetes.py:exclude_nodes.
         exclude_nodes: ${oc.env:HARBOR_EXCLUDE_NODES,}

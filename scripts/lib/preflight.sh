@@ -198,14 +198,14 @@ fi
 # --- 6. AGENT_NAME × scaffold ── §4.2 env_setup avalanche / factory dispatch ───────────
 _an="$(_lc "${AGENT_NAME:-}")"
 case "$_sc" in
-    ohsdk|oh|cc|oc|cx|mixed)   # null makes Harbor honor the patched import_path
+    ohsdk|oh|cc|oc|cx|pi|mixed)   # null makes Harbor honor the patched import_path
         { [ -z "$_an" ] || [ "$_an" = null ]; } && _pf_ok "AGENT_NAME=null ✓ ($_sc uses import_path)" \
             || _pf_fatal "SCAFFOLD=$_sc but AGENT_NAME='$AGENT_NAME' non-null → uses in-pod venv install, no-egress cluster will fail → env_setup avalanche" ;;
     "")         : ;;
-    *)          _pf_warn "unknown SCAFFOLD='$_sc' (supports ohsdk|oh|cc|oc|cx|mixed)" ;;
+    *)          _pf_warn "unknown SCAFFOLD='$_sc' (supports ohsdk|oh|cc|oc|cx|pi|mixed)" ;;
 esac
-# backend=docker: OH-SDK, Claude Code, Codex, OpenCode, and mixed have explicit
-# RemoteDocker loops.
+# backend=docker: OH-SDK, Claude Code, Codex, OpenCode, Pi, and mixed have
+# explicit RemoteDocker loops.
 if [ "$(_lc "${BACKEND:-k8s}")" = docker ]; then
     _loop_name="$(basename "${AGENT_LOOP_CONFIG_PATH:-}")"
     case "$_sc" in
@@ -225,11 +225,15 @@ if [ "$(_lc "${BACKEND:-k8s}")" = docker ]; then
             [ "$_loop_name" = "agent_loop_config_oc_docker.yaml" ] \
                 && _pf_ok "backend=docker + oc ✓ (RemoteDockerEnvironment + oc_docker loop)" \
                 || _pf_fatal "backend=docker + oc must use agent_loop_config_oc_docker.yaml, current=${_loop_name:-<unset>}" ;;
+        pi)
+            [ "$_loop_name" = "agent_loop_config_pi_docker.yaml" ] \
+                && _pf_ok "backend=docker + pi ✓ (RemoteDockerEnvironment + pi_docker loop)" \
+                || _pf_fatal "backend=docker + pi must use agent_loop_config_pi_docker.yaml, current=${_loop_name:-<unset>}" ;;
         mixed)
             [ "$_loop_name" = "agent_loop_config_mixed_cc_cx_ohsdk_docker.yaml" ] \
                 && _pf_ok "backend=docker + mixed ✓ (RemoteDockerEnvironment + CC/CX/OHSDK loop)" \
                 || _pf_fatal "backend=docker + mixed must use agent_loop_config_mixed_cc_cx_ohsdk_docker.yaml, current=${_loop_name:-<unset>}" ;;
-        *)  _pf_warn "backend=docker has no dedicated loop for SCAFFOLD=$_sc; use oh/ohsdk/cc/cx/oc/mixed" ;;
+        *)  _pf_warn "backend=docker has no dedicated loop for SCAFFOLD=$_sc; use oh/ohsdk/cc/cx/oc/pi/mixed" ;;
     esac
     if [ -n "${HARBOR_DOCKER_BUILD_PROXY:-}" ]; then
         if [ "$_PF_STRUCT" = "1" ]; then

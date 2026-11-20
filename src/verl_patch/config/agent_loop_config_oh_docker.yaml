@@ -40,7 +40,7 @@
       override_cpus: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_OVERRIDE_CPUS,1}}
       override_memory_mb: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_OVERRIDE_MEMORY_MB,8192}}
       kwargs:
-        agent_runtime_image: ${oc.env:HARBOR_AGENT_RUNTIME_IMAGE,yuantao428/harbor-openhands-ai-runtime:0.50.0}
+        agent_runtime_image: ${oc.decode:${oc.env:HARBOR_AGENT_RUNTIME_IMAGE,yuantao428/harbor-openhands-ai-runtime:0.50.0}}
         agent_runtime_mount_path: ${oc.env:HARBOR_AGENT_RUNTIME_MOUNT_PATH,/opt/custom-agent-runtime/openhands-ai}
         agent_runtime_image_subpath: ${oc.env:HARBOR_AGENT_RUNTIME_IMAGE_SUBPATH,opt/custom-agent-runtime/openhands-ai}
     environment_build_timeout_multiplier: ${oc.decode:${oc.env:HARBOR_ENVIRONMENT_BUILD_TIMEOUT_MULTIPLIER,1.0}}

@@ -20,7 +20,6 @@ from harbor.models.trial.paths import EnvironmentPaths
 
 from jinja2 import (
     Environment,
-    FileSystemLoader,
     StrictUndefined,
     TemplateSyntaxError,
     UndefinedError,
@@ -215,6 +214,12 @@ class OpenHandsSDK(BaseInstalledAgent):
         # Extract Base commit
         commit_match = re.search(r"\*\*Base commit:\*\*\s+`?([a-f0-9]+)`?", raw_instruction)
         base_commit = commit_match.group(1).strip() if commit_match else ""
+
+        # Non-SWE Harbor tasks (for example BIRD) have no Repo/Base-commit
+        # metadata. Wrapping them in the /testbed repair prompt would replace
+        # their actual deliverable and working directory with an invalid repo.
+        if repo_match is None and commit_match is None:
+            return raw_instruction.strip()
 
         # --- 2. Clean instruction text ---
         # a. Remove the leading "# Task" (case-insensitive)
