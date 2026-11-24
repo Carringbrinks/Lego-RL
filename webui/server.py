@@ -864,11 +864,78 @@ def _extract_msg_text(content: Any) -> str:
     return str(content)
 
 
+_CONTEXT_ONLY_USER_PREFIXES = (
+    "<environment_context",
+    "<codex_internal_context",
+    "<turn_aborted",
+)
+
+
+def _merge_user_context_into_system(
+    system_prompt: str, user_messages: list[str]
+) -> tuple[str, str]:
+    """Build the panel-facing system prompt and user instruction.
+
+    Codex prepends an ``<environment_context>`` user message before the task.
+    Show that context as part of the system prompt, and use the next user
+    message as the actual instruction. This is presentation-only: trajectory
+    files remain untouched.
+    """
+    messages = [m.strip() for m in user_messages if m and m.strip()]
+    if not messages:
+        return system_prompt.strip(), ""
+
+    system_parts = [system_prompt.strip()] if system_prompt.strip() else []
+    first_is_environment = messages[0].lstrip().startswith("<environment_context")
+    if first_is_environment:
+        system_parts.append(messages[0])
+
+    candidates = messages[1:] if first_is_environment else messages
+    problem_statement = next(
+        (
+            m
+            for m in candidates
+            if not m.lstrip().startswith(_CONTEXT_ONLY_USER_PREFIXES)
+        ),
+        "",
+    )
+    return "\n\n".join(system_parts), problem_statement
+
+
+def _parse_proxy_prompt(task_dir: str) -> tuple[str, str]:
+    """Read the full system prompt and user instruction from the LLM proxy log."""
+    path = os.path.join(task_dir, "proxy_trajectory.json")
+    if not os.path.isfile(path):
+        return "", ""
+    try:
+        with open(path, "r", errors="replace") as f:
+            snapshot = (json.load(f) or {}).get("messages_snapshot") or []
+    except Exception:
+        return "", ""
+
+    system_parts: list[str] = []
+    user_messages: list[str] = []
+    for message in snapshot:
+        role = message.get("role")
+        if role not in ("system", "user"):
+            continue
+        text = _clean_text(_extract_msg_text(message.get("content", "")))
+        if not text.strip():
+            continue
+        if role == "system":
+            system_parts.append(text.strip())
+        else:
+            user_messages.append(text.strip())
+
+    return _merge_user_context_into_system("\n\n".join(system_parts), user_messages)
+
+
 def _parse_trajectory(traj_path: str, max_content: int = 800) -> tuple[str, str, list[dict]]:
     """Returns (system_prompt, problem_statement, turns)."""
     turns: list[dict] = []
     system_prompt = ""
     problem_statement = ""
+    user_messages: list[str] = []
     try:
         with open(traj_path, "r", errors="replace") as f:
             for i, line in enumerate(f):
@@ -882,10 +949,11 @@ def _parse_trajectory(traj_path: str, max_content: int = 800) -> tuple[str, str,
                     first_msgs = req.get("messages", [])
                     for m in first_msgs:
                         role = m.get("role", "")
+                        text = _extract_msg_text(m.get("content", ""))
                         if role == "system" and not system_prompt:
-                            system_prompt = _extract_msg_text(m.get("content", ""))
-                        elif role == "user" and not problem_statement:
-                            problem_statement = _extract_msg_text(m.get("content", ""))
+                            system_prompt = text
+                        elif role == "user":
+                            user_messages.append(text)
 
                 choices = resp.get("choices", [])
                 msg = choices[0].get("message", {}) if choices else {}
@@ -925,6 +993,9 @@ def _parse_trajectory(traj_path: str, max_content: int = 800) -> tuple[str, str,
                 })
     except Exception:
         pass
+    system_prompt, problem_statement = _merge_user_context_into_system(
+        system_prompt, user_messages
+    )
     return system_prompt, problem_statement, turns
 
 
@@ -2529,6 +2600,7 @@ def _parse_trajectory_json(
     observation.results=observations)."""
     system_prompt = ""
     problem_statement = ""
+    user_messages: list[str] = []
     turns: list[dict] = []
     try:
         with open(path, "r", errors="replace") as f:
@@ -2545,8 +2617,7 @@ def _parse_trajectory_json(
                 system_prompt = msg
             continue
         if src == "user":
-            if not problem_statement:
-                problem_statement = msg
+            user_messages.append(msg)
             continue
 
         actions = []
@@ -2588,20 +2659,39 @@ def _parse_trajectory_json(
             }
         )
         turn_idx += 1
+    system_prompt, problem_statement = _merge_user_context_into_system(
+        system_prompt, user_messages
+    )
     return system_prompt, problem_statement, turns
 
 
 def _load_trajectory(
     task_dir: str, max_content: int = 800
 ) -> tuple[str, str, list[dict]]:
-    """Load a trajectory from a task dir, preferring the new json format."""
+    """Load panel-facing trajectory data.
+
+    Turns still come from the harness event stream. Prompt fields prefer the
+    LLM proxy snapshot because it is the complete request-level record.
+    """
+    system_prompt, problem_statement, turns = "", "", []
     j = os.path.join(task_dir, "agent", "trajectory.json")
     if os.path.isfile(j):
-        return _parse_trajectory_json(j, max_content)
-    jl = os.path.join(task_dir, "agent", "litellm-trajectory.jsonl")
-    if os.path.isfile(jl):
-        return _parse_trajectory(jl, max_content)
-    return "", "", []
+        system_prompt, problem_statement, turns = _parse_trajectory_json(
+            j, max_content
+        )
+    else:
+        jl = os.path.join(task_dir, "agent", "litellm-trajectory.jsonl")
+        if os.path.isfile(jl):
+            system_prompt, problem_statement, turns = _parse_trajectory(
+                jl, max_content
+            )
+
+    proxy_system, proxy_problem = _parse_proxy_prompt(task_dir)
+    if proxy_system:
+        system_prompt = proxy_system
+    if proxy_problem:
+        problem_statement = proxy_problem
+    return system_prompt, problem_statement, turns
 
 
 # ---------------------------------------------------------------------------
@@ -3238,9 +3328,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 "steps": steps,
                 "total": len(steps),
                 "num_exp_dirs": len(exp_dirs),
-                # step_NNNN is a global rollout/sample index, NOT the training
-                # step (async). Surfaced so the UI can label it accordingly.
-                "step_is_training_step": False,
+                # The builtin agent loop writes this directory from
+                # training/global_step, so the current run layout maps directly
+                # to trainer steps.
+                "step_is_training_step": True,
             }
         )
 

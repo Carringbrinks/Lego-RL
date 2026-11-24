@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -24,3 +25,52 @@ def test_same_swe_task_across_harnesses_has_one_identity():
 
 def test_hyphenated_repository_owner_keeps_one_task_identity():
     assert server._strip_trial_hash("cc-scikit-learn__scikit-learn-123-abcdef12") == "scikit-learn__scikit-learn-123"
+
+
+def test_codex_environment_context_is_merged_into_system_for_display():
+    env = "<environment_context>\n  <cwd>/app</cwd>\n</environment_context>"
+    task = "Write only the final SQL query to /app/answer.sql."
+    system, problem = server._merge_user_context_into_system(
+        "FULL SYSTEM PROMPT",
+        [env, task, "<turn_aborted>interrupted</turn_aborted>"],
+    )
+    assert system == f"FULL SYSTEM PROMPT\n\n{env}"
+    assert problem == task
+
+
+def test_proxy_prompt_overrides_incomplete_agent_prompt_but_keeps_agent_turns(tmp_path):
+    task_dir = tmp_path / "trial"
+    agent_dir = task_dir / "agent"
+    agent_dir.mkdir(parents=True)
+
+    env = "<environment_context>\n  <cwd>/app</cwd>\n</environment_context>"
+    task = "Count all users."
+    (task_dir / "proxy_trajectory.json").write_text(
+        json.dumps(
+            {
+                "messages_snapshot": [
+                    {"role": "system", "content": "FULL SYSTEM PROMPT"},
+                    {"role": "user", "content": env},
+                    {"role": "user", "content": task},
+                ]
+            }
+        )
+    )
+    (agent_dir / "trajectory.json").write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {"source": "system", "message": "INCOMPLETE SYSTEM"},
+                    {"source": "user", "message": env},
+                    {"source": "user", "message": task},
+                    {"source": "agent", "message": "Checking.", "tool_calls": []},
+                ]
+            }
+        )
+    )
+
+    system, problem, turns = server._load_trajectory(str(task_dir))
+    assert system == f"FULL SYSTEM PROMPT\n\n{env}"
+    assert problem == task
+    assert len(turns) == 1
+    assert turns[0]["thought"] == "Checking."

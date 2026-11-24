@@ -246,7 +246,7 @@ function buildMarkdownExport(data: TrajectoryData): string {
     lines.push(`### Turn ${turn.turn + 1}`);
     lines.push("");
     if (turn.thought) {
-      lines.push("**Thought:**");
+      lines.push("**Assistant Message:**");
       lines.push("");
       lines.push(turn.thought);
       lines.push("");
