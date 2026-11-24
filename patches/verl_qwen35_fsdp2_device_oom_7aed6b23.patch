@@ -1,0 +1,43 @@
+diff --git a/verl/models/transformers/qwen3_5.py b/verl/models/transformers/qwen3_5.py
+index c4fda481..28bfcbea 100644
+--- a/verl/models/transformers/qwen3_5.py
++++ b/verl/models/transformers/qwen3_5.py
+@@ -227,7 +227,9 @@ def forward_with_torch_backend(
+     fused_linear_for_ppo = FusedLinearForPPO()
+     vocab_weights = self.lm_head.weight
+     if isinstance(vocab_weights, DTensor):
+-        vocab_weights = vocab_weights.full_tensor()
++        vocab_weights = vocab_weights.to(hidden_states.device).full_tensor()
++    else:
++        vocab_weights = vocab_weights.to(hidden_states.device)
+ 
+     ulysses_sequence_parallel_size = get_ulysses_sequence_parallel_world_size()
+     if ulysses_sequence_parallel_size > 1:
+@@ -278,9 +280,12 @@ def forward_with_triton_backend(
+         )
+ 
+     vocab_weights = self.lm_head.weight
+-    hidden_states = hidden_states.to(vocab_weights.dtype)
+     if isinstance(vocab_weights, DTensor):
+-        vocab_weights = vocab_weights.full_tensor()
++        vocab_weights = vocab_weights.to(hidden_states.device).full_tensor()
++    else:
++        vocab_weights = vocab_weights.to(hidden_states.device)
++
++    hidden_states = hidden_states.to(vocab_weights.dtype)
+ 
+     log_probs, entropy = linear_cross_entropy(
+         hidden_states,
+diff --git a/verl/workers/engine_workers.py b/verl/workers/engine_workers.py
+index 19727541..2d79b850 100644
+--- a/verl/workers/engine_workers.py
++++ b/verl/workers/engine_workers.py
+@@ -704,6 +704,8 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+             return
+ 
+         set_expandable_segments(False)
++        # vLLM sleep 后需要重新映射权重，先释放训练进程的 PyTorch 缓存
++        aggressive_empty_cache(force_sync=True)
+         log_gpu_memory_usage("Before resume weights", logger=logger)
+ 
+         # 1. resume rollout memory (weights were released during sleep)
